@@ -7,8 +7,12 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import requests
+
+from requests import Response
 
 from pgcn.connectome_pipeline import CacheArtifacts, ConnectomePipeline
+from pgcn.connectome_pipeline import PipelineError
 
 
 @pytest.fixture()
@@ -58,3 +62,21 @@ def test_no_direct_pn_to_mbon_edges(sample_cache: CacheArtifacts) -> None:
         if type_lookup.get(int(src)) == "PN" and type_lookup.get(int(tgt)) == "MBON"
     ]
     assert not pn_mbon_edges, "Core subgraph must exclude direct PN→MBON edges"
+
+
+def test_permission_error_surface(monkeypatch: pytest.MonkeyPatch) -> None:
+    pipeline = ConnectomePipeline()
+    monkeypatch.setattr(pipeline, "_read_token", lambda: "dummy-token")
+
+    class StubClient:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            response = Response()
+            response.status_code = 403
+            raise requests.HTTPError("403 Client Error", response=response)
+
+    monkeypatch.setattr("pgcn.connectome_pipeline.CAVEclient", StubClient)
+
+    with pytest.raises(PipelineError) as excinfo:
+        pipeline._init_client()
+
+    assert "lacks 'view' permission" in str(excinfo.value)
